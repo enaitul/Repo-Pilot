@@ -1,8 +1,10 @@
 services:
   - type: web
     name: repopilot
-    env: docker
-    plan: starter
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
     envVars:
       - key: GROQ_API_KEY
