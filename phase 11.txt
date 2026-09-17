@@ -1,0 +1,2062 @@
+==============================================================================
+PHASE 11: INTELLIGENT REPOSITORY-LEVEL CODE REVIEW
+==============================================================================
+
+This document explains Phase 11 of RepoPilot in simple, easy-to-understand
+language. It is based on the ACTUAL current RepoPilot codebase as implemented
+through Phase 10.
+
+This is a PLANNING AND EXPLANATION document only. No code has been written
+for Phase 11 yet.
+
+
+==============================================================================
+1. WHAT IS PHASE 11?
+==============================================================================
+
+Phase 11 adds the ability for RepoPilot to REVIEW code — both existing
+repository code and code that Phase 10 has just modified.
+
+Think of it this way:
+
+- Phase 10 is like a developer who writes code.
+- Phase 11 is like a senior developer who reads and reviews that code
+  before it gets merged.
+
+In a real software team, you never just write code and push it. Someone
+else always reviews it first. They look for bugs, security problems,
+performance issues, and general code quality. Phase 11 gives RepoPilot
+that same review capability.
+
+The full name is:
+
+    INTELLIGENT REPOSITORY-LEVEL CODE REVIEW
+
+Let's break that down:
+
+- "Intelligent" — it uses AI (an LLM) to understand and reason about
+  the code, not just run simple pattern-matching rules.
+
+- "Repository-level" — it doesn't just look at one file in isolation.
+  It considers the whole repository: how files connect, what depends
+  on what, and how changes affect the larger system.
+
+- "Code review" — the process of examining code to find problems,
+  suggest improvements, and verify that changes are correct and safe.
+
+
+==============================================================================
+2. WHY DO WE NEED PHASE 11?
+==============================================================================
+
+After Phase 10, RepoPilot can actually modify code in a repository. It can:
+
+- Create new files
+- Replace lines in existing files
+- Delete files
+- Generate unified diffs showing what changed
+- Validate that modified Python files still have valid syntax
+- Run pytest to check if tests still pass
+- Roll back changes if tests fail
+
+But here is the problem:
+
+Phase 10's validation is NARROW. It checks:
+- Did the Python syntax break? (compile() check in ValidationService)
+- Did the existing tests pass? (pytest run in TestRunner)
+
+It does NOT check:
+- Is the new code actually correct for what was requested?
+- Does the new code introduce a security vulnerability?
+- Does the new code break the architecture of the project?
+- Is the new code well-written and maintainable?
+- Are there edge cases that aren't handled?
+- Does the new code have sufficient test coverage?
+- Are there hardcoded secrets or unsafe patterns?
+
+Phase 10 can tell you "this Python file parses without errors" — but
+it cannot tell you "this code has a SQL injection vulnerability" or
+"this function doesn't handle the case where the input is empty."
+
+Phase 11 fills that gap.
+
+
+==============================================================================
+3. WHAT CAN REPOPILOT DO AFTER PHASE 10?
+==============================================================================
+
+Here is what RepoPilot can do today, based on the actual codebase:
+
+PHASE 1/2 — Repository Ingestion (IngestionService)
+    Clone a GitHub repository.
+    Walk its directory tree (RepoWalker).
+    Detect languages (language_detector.py).
+    Extract imports (import_extractor.py).
+    Build a RepositoryModel with FileMetadata for every source file.
+
+PHASE 3 — Code Parsing (ParsingService)
+    Parse Python files using the ast module (python_parser.py).
+    Parse other languages using Tree-sitter (treesitter_parser.py).
+    Extract CodeSymbols: classes, functions, methods with line ranges.
+    Produce ParsedFile results for every file.
+
+PHASE 4 — Code Chunking (ChunkingService)
+    Break each file's code into smaller pieces (CodeChunks).
+    Keep each chunk meaningful (one function, one method, one class).
+    Split oversized symbols using a sliding window with overlap.
+    Each chunk carries the actual source code text.
+
+PHASE 5 — Embeddings (EmbeddingService)
+    Turn each CodeChunk into a numerical vector (a list of numbers).
+    Use the all-MiniLM-L6-v2 model from sentence-transformers.
+    Each vector captures the "meaning" of the code, not just the text.
+    Produce EmbeddedChunk objects pairing chunks with vectors.
+
+PHASE 6 — Vector Database + Semantic Retrieval (VectorStore, SearchService)
+    Store all vectors in a FAISS index (a fast similarity search library).
+    Normalize vectors for cosine similarity.
+    Given a question, embed it and find the most similar code chunks.
+    Return ranked SearchResult objects.
+    Persist the index to disk (index.faiss + metadata.json).
+
+PHASE 7 — RAG (RAGService)
+    Take a user's question.
+    Retrieve relevant code chunks using Phase 6.
+    Format them as context (ContextBuilder).
+    Build a grounded prompt (PromptBuilder).
+    Send to an LLM (GroqProvider, using llama-3.3-70b-versatile).
+    Return a RAGResponse with the answer and sources.
+
+PHASE 8 — Repository Intelligence (RepositoryIntelligenceService)
+    Build a deterministic RepositoryOverview:
+        - Detected languages (from RepositoryModel.language_summary)
+        - Technologies (TechnologyDetector: manifest files + import hints)
+        - Important files (ImportantFileDetector)
+        - Entry points (e.g., main.py, app.py)
+        - Dependency graph (DependencyGraphBuilder: import-based edges)
+    Format as text (ArchitectureContextBuilder).
+    Ask the LLM to interpret these facts.
+    Return a RepositoryAnalysis.
+
+PHASE 9 — Intelligent Developer Actions (ActionService)
+    Accept structured ActionRequests with explicit ActionType:
+        - TEST_GENERATION
+        - DOCUMENTATION
+        - REFACTORING
+        - BUG_ANALYSIS
+        - CHANGE_PLAN
+    Route to the correct prompt (ActionRouter).
+    Build context using Phase 6 retrieval or Phase 8 architecture facts
+    (ActionContextBuilder).
+    Parse the LLM's JSON response into ActionResult with Findings.
+    Each Finding is labeled: "fact", "inference", or "suggestion".
+    Sources come from retrieval metadata, NEVER from LLM claims.
+    Phase 9 is READ-ONLY — it never modifies files.
+
+PHASE 10 — Controlled Code Modification (ModificationService)
+    Accept an ActionRequest and a RepositoryModel.
+    Reuse Phase 9's CHANGE_PLAN to create a plan.
+    Ask the LLM for structured JSON change records (ProposedChange).
+    Apply changes using WorkspaceTools (create, replace, delete).
+    WorkspaceTools enforces:
+        - Paths must be relative and inside the workspace.
+        - Only allowed file extensions can be modified.
+        - Sensitive files (.env, secrets, etc.) are blocked.
+        - File size limits are enforced.
+    Generate unified diffs (FileDiff).
+    Validate Python syntax (ValidationService using compile()).
+    Run tests (TestRunner using pytest, deterministic command only).
+    Roll back on failure.
+    Return an AgentResult with everything: plan, changes, diffs,
+    validation, test results, warnings, and errors.
+    The original repository is NEVER modified.
+
+
+==============================================================================
+4. WHAT NEW CAPABILITY DOES PHASE 11 ADD?
+==============================================================================
+
+Phase 11 adds INTELLIGENT CODE REVIEW.
+
+After Phase 10 modifies code (or even on existing unmodified code),
+Phase 11 can:
+
+- Review the changes and find potential bugs
+- Identify security vulnerabilities
+- Check if the architecture is being respected
+- Verify that tests cover the changed code
+- Assess code quality and maintainability
+- Rank problems by severity
+- Provide evidence-based findings with file paths and line numbers
+- Generate a structured review report
+
+The key word is EVIDENCE-BASED. Phase 11 does not just ask the LLM to
+make up opinions about code. It gives the LLM real, deterministic facts
+from the repository (files, symbols, diffs, imports, test results) and
+asks the LLM to interpret those facts.
+
+
+==============================================================================
+5. DIFFERENCE BETWEEN PHASE 10 AND PHASE 11
+==============================================================================
+
+    PHASE 10                            PHASE 11
+    --------                            --------
+    WRITES code                         READS and REVIEWS code
+    Creates/modifies/deletes files      Never modifies files
+    Generates diffs                     Analyzes diffs
+    Runs tests                          Reviews test coverage
+    Validates syntax                    Evaluates correctness/security/quality
+    Produces an AgentResult             Produces a ReviewResult (report)
+    Answers "make this change"          Answers "is this change safe/correct?"
+    Uses LLM for generation             Uses LLM for analysis/interpretation
+    Rolls back on failure               Has nothing to roll back
+
+Think of it this way:
+
+    Phase 10 = the developer who writes the code
+    Phase 11 = the reviewer who checks the code
+
+In a real team, these are DIFFERENT roles. The person who wrote the code
+should not be the only person who reviews it. Phase 11 provides that
+independent review.
+
+
+==============================================================================
+6. WHAT IS AUTOMATED CODE REVIEW?
+==============================================================================
+
+"Automated code review" means using software to automatically examine code
+and find potential problems — without a human having to read every line.
+
+Traditional automated review tools include:
+
+- LINTERS — tools that check code style and simple errors
+  Example: pylint checks if you have unused imports in Python.
+
+- STATIC ANALYZERS — tools that analyze code without running it
+  Example: mypy checks if your type annotations are correct.
+
+- SECURITY SCANNERS — tools that look for known vulnerability patterns
+  Example: bandit checks Python code for common security mistakes.
+
+These tools are deterministic. They follow fixed rules. They are fast
+and reliable, but they can only find problems that match their rules.
+
+Phase 11 is DIFFERENT because it uses an LLM:
+
+- It can understand INTENT — what the code is trying to do.
+- It can reason about CONTEXT — how a change affects other files.
+- It can identify SUBTLE bugs that no fixed rule would catch.
+- It can explain WHY something is a problem, not just flag it.
+
+But the LLM is also LESS reliable than a deterministic tool. It can
+hallucinate (make things up). That's why Phase 11 uses a HYBRID approach:
+deterministic facts from RepoPilot + AI interpretation from the LLM.
+
+
+==============================================================================
+7. WHAT IS REPOSITORY-LEVEL CODE REVIEW?
+==============================================================================
+
+"Repository-level" means reviewing code in the context of the ENTIRE
+repository, not just one file at a time.
+
+When you review a single file, you can check:
+- Does this function have a bug?
+- Is this code readable?
+- Are there syntax errors?
+
+When you review at the REPOSITORY level, you can also check:
+- Does this new file fit the existing architecture?
+- Does this import create a circular dependency?
+- Is this duplicating logic that already exists elsewhere?
+- Does this change break something in another file that depends on it?
+- Is this consistent with how similar things are done in the project?
+
+RepoPilot already has the infrastructure for repository-level understanding:
+
+- Phase 8's DependencyGraph knows which files import which other files.
+- Phase 8's RepositoryOverview knows the technologies, entry points,
+  and important files.
+- Phase 6's FAISS index can retrieve related code from anywhere in the repo.
+- Phase 7's RAG can answer questions grounded in real repository code.
+
+Phase 11 reuses all of this to review code with full repository context.
+
+
+==============================================================================
+8. WHY REVIEWING A SINGLE FILE IS NOT ENOUGH
+==============================================================================
+
+Here is a concrete example.
+
+Suppose Phase 10 modifies a file called `user_service.py` and adds a
+new function called `delete_user(user_id)`. If you review ONLY that file,
+it might look perfectly fine — clean code, no syntax errors, good naming.
+
+But if you look at the REPOSITORY level, you might notice:
+
+1. There is already a `remove_user()` function in `admin_service.py`
+   that does the same thing. This is DUPLICATED LOGIC.
+
+2. The file `permission_checker.py` imports `user_service` and assumes
+   that user deletion always goes through the admin flow. The new
+   `delete_user()` function bypasses that. This is a BROKEN ASSUMPTION.
+
+3. The `user_service.py` file is imported by 7 other files in the
+   project. Adding a function that directly accesses the database
+   without going through the data layer violates the project's
+   architecture. This is an ARCHITECTURE VIOLATION.
+
+4. There are no tests for the new `delete_user()` function, but there
+   ARE tests for the existing `remove_user()`. This is a TESTING GAP.
+
+None of these problems would be visible by reviewing just one file.
+Repository-level review catches them because it sees the bigger picture.
+
+
+==============================================================================
+9. HOW REPOPILOT UNDERSTANDS THE REPOSITORY BEFORE REVIEWING IT
+==============================================================================
+
+Before Phase 11 can review any code, RepoPilot needs to UNDERSTAND the
+repository. This understanding was already built by Phases 1 through 8:
+
+STEP 1: Repository Ingestion (Phase 1/2)
+    IngestionService clones the repository and RepoWalker scans every file.
+    Result: a RepositoryModel containing FileMetadata for each file,
+    including path, language, size, imports, and line count.
+
+STEP 2: Code Parsing (Phase 3)
+    ParsingService runs the appropriate parser on each file.
+    Python files are parsed using the `ast` module (python_parser.py).
+    Other languages use Tree-sitter (treesitter_parser.py).
+    Result: ParsedFile objects with CodeSymbols (classes, functions,
+    methods) including their exact start and end line numbers.
+
+STEP 3: Chunking (Phase 4)
+    ChunkingService breaks each file's symbols into CodeChunks.
+    Each chunk contains the actual source code text.
+    Large symbols are split with a sliding window (CHUNK_OVERLAP_LINES = 3).
+    Result: a list of CodeChunk objects, each with a unique chunk_id.
+
+STEP 4: Embeddings (Phase 5)
+    EmbeddingService converts each chunk's text into a vector using
+    the all-MiniLM-L6-v2 model. The embedding includes a metadata header
+    (file path, symbol name, language) for disambiguation.
+    Result: EmbeddedChunk objects with vectors of 384 dimensions.
+
+STEP 5: Vector Storage (Phase 6)
+    VectorStore stores the vectors in a FAISS IndexFlatIP index
+    (inner product on normalized vectors = cosine similarity).
+    Uses IndexIDMap to maintain chunk-to-vector mapping.
+    Persists to disk as index.faiss + metadata.json.
+
+STEP 6: Architecture Facts (Phase 8)
+    RepositoryOverviewBuilder combines:
+        - TechnologyDetector (manifest files + import hints)
+        - ImportantFileDetector (entry points + important files)
+        - DependencyGraphBuilder (import-based file dependency edges)
+    Result: a RepositoryOverview with purely deterministic facts.
+
+All of this is already built. Phase 11 does NOT rebuild any of it.
+It REUSES what is already there.
+
+
+==============================================================================
+10. HOW PHASE 6 RETRIEVAL IS REUSED
+==============================================================================
+
+Phase 6 gave RepoPilot the ability to find code that is semantically
+related to a question. Here is exactly how it works:
+
+1. SearchService receives a text query (e.g., "input validation").
+2. It embeds the query using the same EmbeddingProvider used in Phase 5.
+3. It asks VectorStore to find the top_k most similar stored vectors.
+4. VectorStore uses FAISS to perform fast inner-product search.
+5. It returns SearchResult objects with the matching CodeChunks and
+   similarity scores.
+
+Phase 11 can reuse this EXACTLY as-is:
+
+    When reviewing a changed file, Phase 11 needs to find RELATED code
+    in the repository. For example, if a change modifies an authentication
+    function, Phase 11 needs to find other authentication-related code
+    to check for consistency.
+
+    It does this by calling SearchService.search() with a query derived
+    from the changed code — the same call that RAGService already makes.
+
+    No new embedding model. No new FAISS index. No new search logic.
+
+    The existing SearchService (search_service.py) and VectorStore
+    (vector_store.py) are reused without modification.
+
+
+==============================================================================
+11. HOW PHASE 7 RAG IS REUSED
+==============================================================================
+
+Phase 7 gave RepoPilot the ability to answer questions grounded in
+real code. Here is how it works:
+
+1. RAGService receives a question.
+2. It retrieves relevant code using SearchService (Phase 6).
+3. ContextBuilder formats the retrieved chunks into clean text.
+4. PromptBuilder creates a system prompt and user prompt.
+5. The LLM generates an answer grounded in the provided context.
+6. Sources are built from the actual retrieval metadata.
+
+Phase 11 reuses this pattern:
+
+    - ContextBuilder.build() — to format retrieved code as context text.
+      The same formatting (File, Symbol, Lines, Language, Relevance score)
+      works perfectly for review context too.
+
+    - PromptBuilder — Phase 11 would add new review-specific prompts,
+      following the same pattern as Phase 9 added action-specific prompts.
+      The existing PromptBuilder already has 8 different prompt methods
+      (build, build_architecture, build_test_generation, etc.). Phase 11
+      would add review prompts in the same style.
+
+    - LLMProvider / GroqProvider — the same LLM provider is reused.
+      No new API keys, no new models, no new provider classes needed.
+
+    - Source model — the same Source dataclass from Phase 7 can be
+      reused to cite evidence in review findings.
+
+
+==============================================================================
+12. HOW PHASE 8 REPOSITORY INTELLIGENCE IS REUSED
+==============================================================================
+
+Phase 8 gave RepoPilot deterministic repository-level facts. This is
+critical for Phase 11 because reviews need ARCHITECTURAL context.
+
+Phase 8 provides:
+
+    RepositoryOverview:
+        - repo_url: which repository this is
+        - languages: dict of language -> file count
+        - technologies: list of Technology (name + confidence + evidence)
+        - important_files: list of important file paths
+        - entry_points: list of detected entry point files
+        - dependency_graph: DependencyGraph (nodes + edges)
+
+    DependencyGraph:
+        - nodes: every file path in the repository
+        - edges: DependencyEdge (source -> target) from import resolution
+        - isolated_nodes: files with no internal imports
+
+Phase 11 reuses this for:
+
+    ARCHITECTURE REVIEW:
+        The DependencyGraph tells Phase 11 which files depend on a changed
+        file. If `models.py` is modified, the DependencyGraph shows that
+        `ingestion_service.py`, `parsing_service.py`, `chunking_service.py`,
+        and many other files import from it. Phase 11 can flag that changes
+        to `models.py` have a WIDE IMPACT.
+
+    CONSISTENCY CHECKING:
+        The technologies list tells Phase 11 what frameworks are in use.
+        If the project uses pytest (detected from pytest.ini) and a new
+        test file uses unittest instead, Phase 11 can flag the inconsistency.
+
+    DEPENDENCY ANALYSIS:
+        The DependencyGraph's edges show import relationships. Phase 11 can
+        check whether a new change creates a circular dependency (A imports
+        B, B imports A) which is a real architectural problem.
+
+All of this comes from RepositoryOverviewBuilder.build(), which is already
+implemented and tested. Phase 11 calls it directly.
+
+
+==============================================================================
+13. HOW PHASE 9 CAN BE REUSED WHERE APPROPRIATE
+==============================================================================
+
+Phase 9 has several components that are useful for Phase 11:
+
+    Finding dataclass (models.py):
+        Phase 9 already defines a Finding with:
+            - category: "fact" / "inference" / "suggestion"
+            - description: what was found
+            - affected_file: which file
+            - affected_symbol: which function/class
+            - severity_or_confidence: how serious/certain
+
+        Phase 11's review findings have a very similar structure. Phase 11
+        may extend or wrap this, but the concept of a finding with an
+        explicit category label is directly reusable.
+
+    ActionContextBuilder (action_context_builder.py):
+        This already knows how to build context two different ways:
+            - Code-level context via SearchService (for most actions)
+            - Architecture-level context via RepositoryOverviewBuilder
+              (for CHANGE_PLAN)
+
+        Phase 11 may need BOTH types of context for a single review, but
+        the individual builders are ready to be called.
+
+    JSON response parsing (ActionService._parse_llm_json):
+        Phase 11 will also need to parse structured JSON from the LLM.
+        The same defensive parsing (strip code fences, validate JSON,
+        check for dict) can be reused or shared.
+
+    Anti-hallucination grounding rules:
+        Phase 9's prompts include explicit rules like:
+            "Do not invent files, functions, classes, or dependencies"
+            "Every finding must be labeled fact/inference/suggestion"
+            "Sources come from retrieval metadata, NOT from LLM claims"
+
+        Phase 11 should follow the exact same approach.
+
+Note: Phase 9 is READ-ONLY. Phase 11 is also READ-ONLY. Neither modifies
+files. This makes Phase 9 a natural architectural precedent for Phase 11.
+
+
+==============================================================================
+14. HOW PHASE 10'S DIFF AND VALIDATION ARE REUSED
+==============================================================================
+
+Phase 10 produces several outputs that are valuable inputs for Phase 11:
+
+    AgentResult (models.py):
+        After Phase 10 runs, it returns an AgentResult containing:
+            - status: "tested", "validated", "failed", etc.
+            - change_plan: the Phase 9 ActionResult used for planning
+            - proposed_changes: list of ProposedChange (file, operation,
+              line range, new content)
+            - applied_changes: which changes were actually applied
+            - diffs: list of FileDiff (file_path, unified diff text,
+              lines_added, lines_removed)
+            - validation_result: ValidationResult (valid + messages)
+            - test_result: TestResult (status, command, exit_code,
+              stdout, stderr)
+            - warnings: list of warning strings
+            - errors: list of error strings
+
+    For Phase 11, the most important pieces are:
+
+    1. diffs (list[FileDiff]):
+       Each FileDiff has the actual unified diff text. Phase 11 can show
+       the LLM exactly what changed: which lines were added, which were
+       removed, and what the surrounding context looks like.
+
+    2. test_result (TestResult):
+       Phase 11 can include the test results as context. If tests passed,
+       that's evidence the change didn't break existing functionality.
+       If tests failed, Phase 11 can analyze the failure output.
+
+    3. validation_result (ValidationResult):
+       If Python syntax validation passed, Phase 11 knows the code at
+       least parses. This is a deterministic fact, not an AI inference.
+
+    4. proposed_changes (list[ProposedChange]):
+       Each change has the exact file_path, operation (create/replace/delete),
+       start_line, end_line, and new_content. Phase 11 knows exactly
+       what was changed and where.
+
+    Phase 11 does NOT re-run tests or re-validate syntax. It reads
+    Phase 10's existing results and uses them as evidence.
+
+
+==============================================================================
+15. COMPLETE PHASE 11 ARCHITECTURE
+==============================================================================
+
+Here is the complete flow of Phase 11, showing how it connects to
+existing phases:
+
+
+    Repository / Changes
+            |
+            v
+    Changed Files .............. Identified from Phase 10's AgentResult
+            |                   (diffs, proposed_changes) or specified
+            |                   by the user for full-repo review.
+            v
+    Repository Context ......... Built from Phase 8's RepositoryOverview
+            |                   (languages, technologies, important files,
+            |                   entry points, dependency graph).
+            v
+    Relevant Code Retrieval .... Phase 6's SearchService finds related
+            |                   code in the repository using FAISS.
+            |                   Queries are derived from changed code
+            |                   or review targets.
+            v
+    Code Analysis .............. Deterministic: file existence, symbols,
+            |                   line counts, import relationships.
+            |                   From existing Phase 1-3 data.
+            v
+    Architecture Analysis ...... Phase 8's DependencyGraph: who imports
+            |                   the changed files? Are there circular
+            |                   dependencies? How central is this file?
+            v
+    Security Analysis .......... LLM examines code for known vulnerability
+            |                   patterns, grounded in actual code content
+            |                   (not invented).
+            v
+    Testing Analysis ........... Phase 10's TestResult is included.
+            |                   LLM checks if changes have corresponding
+            |                   tests, using retrieved test files.
+            v
+    LLM Review ................ The LLM receives ALL of the above as
+            |                   structured context and produces findings.
+            |                   It is told what is deterministic fact vs.
+            |                   what it is asked to interpret.
+            v
+    Structured Findings ........ Each finding has: category, severity,
+            |                   file, line range, description, evidence,
+            |                   and confidence label.
+            v
+    Severity Ranking ........... Findings are sorted by severity:
+            |                   CRITICAL > HIGH > MEDIUM > LOW > INFO.
+            v
+    Review Report .............. Final structured output with:
+                                summary, findings, severity breakdown,
+                                evidence, recommendations, limitations.
+
+
+Every step above either reuses an existing RepoPilot component or adds
+a thin new layer on top of existing components.
+
+
+==============================================================================
+REVIEW MODES
+==============================================================================
+
+Phase 11 should support two review modes:
+
+
+MODE 1: FULL REPOSITORY REVIEW
+-------------------------------
+
+What it does:
+    Reviews the entire repository (or a significant portion of it) for
+    general code quality, security, architecture, and maintainability.
+
+When to use it:
+    - When onboarding to a new codebase and wanting an overview of issues.
+    - When doing a periodic health check of the project.
+    - When you want to find problems that have accumulated over time.
+
+How it works:
+    1. Use Phase 8's RepositoryOverview for architectural context.
+    2. Use Phase 6 retrieval to sample key files (important files,
+       entry points, heavily-imported files).
+    3. Ask the LLM to review each area (security, architecture,
+       testing, etc.) with the retrieved context.
+    4. Compile findings into a report.
+
+Limitation:
+    A large repository has too many files to review every single one.
+    Phase 11 focuses on important files, entry points, and heavily-
+    connected files in the dependency graph — the same files that would
+    matter most in a human review.
+
+
+MODE 2: CHANGED-FILES / DIFF REVIEW
+------------------------------------
+
+What it does:
+    Reviews ONLY the files that were changed, using the diffs to focus
+    on what is new or modified.
+
+When to use it:
+    - After Phase 10 modifies code (the primary use case).
+    - When reviewing a specific set of changed files.
+    - When you want focused feedback on recent work.
+
+How it works:
+    1. Read Phase 10's AgentResult for diffs and changed file paths.
+    2. Use Phase 6 retrieval to find RELATED code in the repository
+       (code that imports the changed files, code that does similar
+       things, existing tests for the changed code).
+    3. Use Phase 8's DependencyGraph to find files that depend on the
+       changed files.
+    4. Give the LLM: the diffs, the changed file content, the related
+       code, the architecture context, and Phase 10's test results.
+    5. Ask the LLM to review the changes specifically.
+    6. Compile findings into a focused report.
+
+Why diff review is especially useful after Phase 10:
+    Phase 10 generates code using an LLM. LLM-generated code can:
+    - Look syntactically correct but be logically wrong.
+    - Introduce patterns that don't match the project's conventions.
+    - Miss edge cases that a human developer would catch.
+    - Use insecure patterns (e.g., not sanitizing input).
+    - Create functions that duplicate existing functionality.
+
+    Phase 10's own validation only checks Python syntax (compile) and
+    runs existing tests (pytest). It does NOT deeply analyze the quality,
+    security, or correctness of the generated code. That's Phase 11's job.
+
+    Having the diff from Phase 10 means Phase 11 knows EXACTLY what
+    changed, so it can focus its review on the new/modified code rather
+    than re-reviewing the entire repository.
+
+
+==============================================================================
+REVIEW FINDINGS
+==============================================================================
+
+WHAT IS A "FINDING"?
+--------------------
+
+A "finding" is a single observation or problem discovered during a review.
+
+It is NOT just a vague comment like "this code could be better." A finding
+is a specific, evidence-based observation with:
+
+- A description of what was found
+- Where it was found (file, line number)
+- How serious it is (severity)
+- What kind of issue it is (category)
+- Evidence supporting the finding
+- A recommendation for how to fix it
+
+Example finding:
+
+    Severity: HIGH
+    Category: SECURITY
+    File: auth/register.py
+    Lines: 38-45
+    Description: User-supplied email is passed directly to an SQL query
+                 without parameterization.
+    Evidence: Line 42 uses f-string interpolation inside a SQL query.
+    Recommendation: Use parameterized queries instead of string formatting.
+
+
+SEVERITY LEVELS
+---------------
+
+CRITICAL
+    What it means: Something that could cause serious damage RIGHT NOW.
+    Examples: Hardcoded database password in source code. Remote code
+    execution vulnerability. Data corruption in a write operation.
+    Analogy: Your house is on fire. Drop everything and fix this.
+
+HIGH
+    What it means: A significant problem that should be fixed soon.
+    Examples: SQL injection vulnerability. Missing authentication check
+    on a sensitive endpoint. Race condition that can lose data.
+    Analogy: Your front door lock is broken. Fix it before tonight.
+
+MEDIUM
+    What it means: A real problem, but not immediately dangerous.
+    Examples: Catching a broad Exception instead of a specific one.
+    Missing input validation that could cause unexpected behavior.
+    A function that is doing too many things.
+    Analogy: A dripping faucet. It needs fixing but won't flood the house.
+
+LOW
+    What it means: A minor issue that affects code quality but not safety.
+    Examples: Inconsistent naming conventions. Redundant import statements.
+    A function that could be simplified.
+    Analogy: A squeaky door hinge. Annoying but not harmful.
+
+INFO
+    What it means: An observation, not a problem. Useful context.
+    Examples: "This file is imported by 12 other files, so changes here
+    have wide impact." "This function has no tests, though it may not
+    need them if it's simple enough."
+    Analogy: A note on the fridge. Good to know.
+
+
+REVIEW CATEGORIES
+-----------------
+
+Not every category listed below is necessarily worth implementing.
+The decision should be made during actual implementation based on what
+the existing RepoPilot infrastructure can support well.
+
+BUG
+    Potential logical errors in the code.
+    Example: An off-by-one error in a loop, or a function that returns
+    None when the caller expects a string.
+    Useful for RepoPilot? YES — the LLM can reason about logic.
+
+SECURITY
+    Potential security vulnerabilities.
+    Example: Hardcoded secrets, unsanitized input, SQL injection.
+    Useful for RepoPilot? YES — this is one of the most valuable
+    review categories, especially for LLM-generated code.
+
+PERFORMANCE
+    Code that may be unnecessarily slow.
+    Example: An O(n²) loop that could be O(n), or reading a file
+    repeatedly inside a loop.
+    Useful for RepoPilot? MAYBE — the LLM can spot obvious patterns,
+    but it cannot actually benchmark code. Findings should be
+    labeled as inferences, not facts.
+
+CORRECTNESS
+    Code that does not do what it claims to do.
+    Example: A function called `calculate_average` that actually
+    calculates the sum.
+    Useful for RepoPilot? YES — especially for LLM-generated code
+    where the intent is stated in the user's request.
+
+CODE QUALITY
+    General readability and cleanliness.
+    Example: Very long functions, deeply nested conditionals, unclear
+    variable names.
+    Useful for RepoPilot? YES — but findings should be LOW severity
+    unless they significantly harm maintainability.
+
+MAINTAINABILITY
+    How easy the code is to change in the future.
+    Example: Tightly coupled classes, magic numbers without explanation,
+    duplicated logic across files.
+    Useful for RepoPilot? YES — Phase 8's dependency graph helps
+    identify coupling.
+
+ARCHITECTURE
+    Whether the code follows the project's design patterns.
+    Example: A new service that bypasses the existing service layer
+    and accesses the database directly.
+    Useful for RepoPilot? YES — Phase 8's RepositoryOverview and
+    DependencyGraph provide architectural context.
+
+TESTING
+    Whether the code is adequately tested.
+    Example: A new function with no tests, or a test that doesn't
+    actually assert anything meaningful.
+    Useful for RepoPilot? YES — Phase 10 already runs tests and
+    Phase 6 can retrieve existing test files for comparison.
+
+ERROR HANDLING
+    Whether errors are handled appropriately.
+    Example: Swallowing exceptions silently, or not handling the case
+    where a file doesn't exist.
+    Useful for RepoPilot? YES — RepoPilot's own codebase demonstrates
+    careful error handling patterns (see exceptions.py), so the LLM
+    has good examples to compare against.
+
+DEPENDENCY
+    Issues with how the code uses imports and dependencies.
+    Example: Importing a module that creates a circular dependency,
+    or using an external library when the standard library suffices.
+    Useful for RepoPilot? YES — Phase 8's DependencyGraph directly
+    supports this analysis.
+
+DOCUMENTATION
+    Whether the code is adequately documented.
+    Example: A complex function with no docstring, or a docstring
+    that doesn't match the actual behavior.
+    Useful for RepoPilot? MAYBE — lower priority than bugs and
+    security. Could be INFO-level findings.
+
+Based on the existing RepoPilot infrastructure, the most valuable
+categories to implement first would be:
+
+    1. SECURITY — high value, especially for reviewing LLM-generated code
+    2. BUG — high value, core purpose of code review
+    3. ARCHITECTURE — well-supported by Phase 8
+    4. TESTING — well-supported by Phase 10's test results
+    5. ERROR HANDLING — well-supported by existing codebase patterns
+
+Categories like PERFORMANCE and DOCUMENTATION are useful but lower
+priority and could be added later.
+
+
+==============================================================================
+EVIDENCE-BASED REVIEW
+==============================================================================
+
+WHY THE LLM SHOULD NOT SIMPLY GENERATE RANDOM CODE-REVIEW COMMENTS
+-------------------------------------------------------------------
+
+If you just ask an LLM "review this code" without any grounding, it will
+often produce comments like:
+
+    "Consider adding error handling here."
+    "This function could be vulnerable to injection attacks."
+    "Make sure to add tests for edge cases."
+
+These comments SOUND helpful but they might be:
+- About problems that don't actually exist in the code
+- About files or functions the LLM invented (hallucination)
+- Generic advice that applies to any code, not this code specifically
+
+Phase 11 requires EVIDENCE-BASED review. Every finding must be supported
+by real, verifiable evidence from the repository.
+
+
+WHAT IS EVIDENCE?
+-----------------
+
+Evidence is a concrete piece of information from the repository that
+supports a finding. Evidence types include:
+
+    Source file: the actual file where the issue exists.
+        Example: "repopilot/workspace_tools.py"
+
+    Line number: the exact line(s) where the issue is.
+        Example: Line 42
+
+    Line range: a range of lines showing the problematic code.
+        Example: Lines 38-45
+
+    Symbol: the function, class, or method involved.
+        Example: "WorkspaceTools.validate_change"
+
+    Relevant code: the actual code text (from a retrieved chunk or
+        from the diff) that shows the problem.
+        Example: 'target = self._resolve(change.file_path)'
+
+    Dependency: which other files depend on this one.
+        Example: "modification_service.py imports WorkspaceTools"
+
+    Diff: what was added/removed (for changed-file reviews).
+        Example: "+    user_input = request.form['email']"
+
+    Test information: what the tests showed.
+        Example: "TestResult: passed with exit_code=0"
+
+The evidence must come from DETERMINISTIC SOURCES — RepoPilot's actual
+file data, not from the LLM's imagination.
+
+
+THE DIFFERENCE BETWEEN DETECTED FACT, LLM INFERENCE, AND RECOMMENDATION
+------------------------------------------------------------------------
+
+This is a CRITICAL distinction that Phase 11 inherits from Phase 9's
+Finding model. Every review finding must be explicitly labeled.
+
+DETECTED FACT:
+    Something that is directly observable and verifiable in the code.
+    The LLM didn't need to reason about it — it's right there.
+
+    Example:
+        "The function `_resolve()` in workspace_tools.py (line 118)
+         catches ValueError but does not catch OSError."
+
+    Why this is a fact: You can look at line 118 and see exactly which
+    exceptions are caught. No interpretation needed.
+
+LLM INFERENCE:
+    A reasonable conclusion the LLM draws from the evidence, but which
+    goes beyond what is directly visible.
+
+    Example:
+        "Because `_resolve()` only catches ValueError, a symlink to a
+         nonexistent path could cause an unhandled OSError at line 123."
+
+    Why this is an inference: The LLM is reasoning about what COULD
+    happen based on what it sees. It's a reasonable conclusion, but it
+    hasn't been proven — maybe there's a try/except higher up the call
+    stack that handles it.
+
+RECOMMENDATION:
+    A suggested action. This is NOT a claim about the current code —
+    it's a proposal for what to change.
+
+    Example:
+        "Consider adding an OSError handler to `_resolve()`, or
+         documenting that callers are responsible for handling it."
+
+    Why this is a recommendation: It's the reviewer's opinion about
+    what should be done. It might be a good idea or it might not be
+    appropriate for this project — the developer decides.
+
+
+SIMPLE EXAMPLES:
+
+    Example 1 — Security finding
+
+        DETECTED FACT:
+            Line 42 of auth/register.py uses f"SELECT * FROM users WHERE
+            email = '{email}'" to construct a SQL query.
+
+        LLM INFERENCE:
+            Because the email variable comes directly from user input
+            (line 38: email = request.form['email']), this query is
+            vulnerable to SQL injection.
+
+        RECOMMENDATION:
+            Use parameterized queries: cursor.execute(
+            "SELECT * FROM users WHERE email = ?", (email,))
+
+    Example 2 — Architecture finding
+
+        DETECTED FACT:
+            The new file data_access.py imports directly from
+            database_connection.py, bypassing the existing
+            repository_layer.py that all other services use.
+
+        LLM INFERENCE:
+            This breaks the project's layered architecture where all
+            database access goes through repository_layer.py. Future
+            changes to database configuration would need to be updated
+            in two places instead of one.
+
+        RECOMMENDATION:
+            Route data access through repository_layer.py to maintain
+            a single point of database configuration.
+
+
+==============================================================================
+EXAMPLE: END-TO-END PHASE 10 + PHASE 11 WORKFLOW
+==============================================================================
+
+NOTE: The following is a HYPOTHETICAL example to illustrate how Phase 11
+would work. The files, code, and findings shown here are fictional and
+do not represent actual content of the RepoPilot repository.
+
+
+SCENARIO:
+
+    A user asks RepoPilot:
+    "Add validation to the registration endpoint."
+
+
+STEP 1: User Request
+
+    The user sends an ActionRequest:
+        action_type: CHANGE_PLAN (initially) then modification
+        request: "Add validation to the registration endpoint."
+        target_file: "auth/register.py"
+
+
+STEP 2: Phase 9 — Plan
+
+    ModificationService calls ActionService.execute() with CHANGE_PLAN.
+    Phase 9 uses Phase 8's RepositoryOverview to understand the project.
+    It produces an ActionResult with a plan:
+        "1. Modify auth/register.py to add input validation.
+         2. Add email format validation.
+         3. Add password strength checking.
+         4. Return appropriate error messages."
+
+
+STEP 3: Phase 10 — Modification
+
+    ModificationService asks the LLM for structured changes.
+    The LLM produces a ProposedChange:
+        file_path: "auth/register.py"
+        operation: REPLACE
+        start_line: 35
+        end_line: 50
+        new_content: (new code with validation)
+
+    WorkspaceTools applies the change to the disposable workspace.
+
+
+STEP 4: Phase 10 — Diff
+
+    WorkspaceTools.diffs() generates a unified diff:
+
+        --- a/auth/register.py
+        +++ b/auth/register.py
+        @@ -35,16 +35,25 @@
+         def register_user(request):
+        -    email = request.form['email']
+        -    password = request.form['password']
+        -    user = User(email=email, password=password)
+        -    db.session.add(user)
+        -    db.session.commit()
+        -    return {"status": "created"}
+        +    email = request.form['email']
+        +    password = request.form['password']
+        +    if not email or '@' not in email:
+        +        return {"error": "Invalid email"}, 400
+        +    if len(password) < 8:
+        +        return {"error": "Password too short"}, 400
+        +    user = User(email=email, password=password)
+        +    db.session.add(user)
+        +    db.session.commit()
+        +    return {"status": "created"}
+
+
+STEP 5: Phase 10 — Validation and Tests
+
+    ValidationService: compile() succeeds — valid Python syntax.
+    TestRunner: pytest runs, exit_code=0 — all tests pass.
+    Phase 10 returns AgentResult with status="tested".
+
+
+STEP 6: Phase 11 — Review
+
+    Now Phase 11 receives the AgentResult and reviews the changes.
+
+    It gathers context:
+        - The diff (from AgentResult.diffs)
+        - The changed file content
+        - Related code (SearchService finds other auth-related code)
+        - Architecture context (DependencyGraph shows which files
+          import auth/register.py)
+        - Test results (TestResult: passed)
+        - Existing test files for auth/ (retrieved via Phase 6)
+
+    It sends all of this to the LLM with a review-specific prompt.
+
+
+STEP 7: Phase 11 — Findings
+
+    The LLM produces findings such as:
+
+
+    FINDING 1:
+        Severity: HIGH
+        Category: SECURITY
+        File: auth/register.py
+        Lines: 36-37
+        Type: inference
+
+        Problem:
+        User input from request.form['email'] and request.form['password']
+        is used without sanitization. While basic format validation was
+        added, the email is not sanitized before being stored, which could
+        allow XSS if displayed elsewhere.
+
+        Evidence:
+            Line 36: email = request.form['email']
+            Line 37: password = request.form['password']
+            Line 43: user = User(email=email, password=password)
+
+        Recommendation:
+        Sanitize the email input before storage. Consider using a
+        dedicated validation library for email format validation.
+
+
+    FINDING 2:
+        Severity: MEDIUM
+        Category: SECURITY
+        File: auth/register.py
+        Line: 43
+        Type: inference
+
+        Problem:
+        The password appears to be stored as plain text. The User object
+        is created with password=password, suggesting no hashing.
+
+        Evidence:
+            Line 43: user = User(email=email, password=password)
+            (No call to a hashing function visible in the diff)
+
+        Recommendation:
+        Hash the password before storage using a library like bcrypt.
+
+
+    FINDING 3:
+        Severity: MEDIUM
+        Category: TESTING
+        File: auth/register.py
+        Type: inference
+
+        Problem:
+        The new validation logic (email format check, password length
+        check) has no corresponding test cases. Existing tests passed
+        because they test the old behavior, not the new validation.
+
+        Evidence:
+            TestResult: passed with exit_code=0
+            No test file found for the new validation paths
+            (searched via Phase 6 retrieval)
+
+        Recommendation:
+        Add tests for: empty email, email without @, short password,
+        and valid input.
+
+
+    FINDING 4:
+        Severity: LOW
+        Category: CODE QUALITY
+        File: auth/register.py
+        Lines: 38-41
+        Type: suggestion
+
+        Problem:
+        Email validation uses a simple '@' check. This would accept
+        clearly invalid emails like "@" or "a@b".
+
+        Recommendation:
+        Consider using a regular expression or a validation library
+        for more robust email validation.
+
+
+STEP 8: Developer Review
+
+    The developer reads the review report and decides:
+    - Finding 1: Good catch, I'll add sanitization.
+    - Finding 2: I'll check the User model — maybe it already hashes.
+    - Finding 3: I'll add those tests.
+    - Finding 4: For now the simple check is fine, I'll enhance it later.
+
+The complete flow:
+
+    User Request
+        |
+        v
+    Phase 9 Plan
+        |
+        v
+    Phase 10 Modification
+        |
+        v
+    Diff
+        |
+        v
+    Phase 10 Validation
+        |
+        v
+    Phase 11 Review
+        |
+        v
+    Findings
+        |
+        v
+    Developer Review
+
+IMPORTANT: The example above is HYPOTHETICAL. The files, code, and
+findings shown are fictional illustrations. They do not represent actual
+content of the RepoPilot repository.
+
+
+==============================================================================
+LLM ROLE
+==============================================================================
+
+WHAT THE LLM DOES IN PHASE 11
+------------------------------
+
+The LLM's job in Phase 11 is INTERPRETATION and REASONING:
+
+1. It reads the context provided to it (real code, real diffs, real
+   architecture facts, real test results).
+
+2. It identifies patterns that look like bugs, security issues,
+   architecture violations, or quality problems.
+
+3. It explains WHY something is a problem, in human-readable language.
+
+4. It suggests what could be done to fix it.
+
+5. It labels each finding as fact / inference / suggestion.
+
+
+WHAT THE LLM SHOULD NOT DO
+---------------------------
+
+The LLM should NOT:
+
+- Invent files that don't exist.
+    WRONG: "The file auth/middleware.py has a vulnerability."
+    (if that file doesn't exist in the repository)
+
+- Invent functions that don't exist.
+    WRONG: "The function validate_token() is insecure."
+    (if that function isn't in the retrieved context)
+
+- Invent vulnerabilities without evidence.
+    WRONG: "This code has a buffer overflow."
+    (if the code is Python, which doesn't have buffer overflows)
+
+- Claim tests passed when they did not.
+    WRONG: "All tests pass."
+    (if TestResult.status was "failed")
+
+- Claim code exists when it does not.
+    WRONG: "The existing rate limiter handles this."
+    (if no rate limiter is visible in the context)
+
+- Execute arbitrary commands.
+    The LLM has no shell access. It cannot run code, install packages,
+    or execute scripts. This is by design — same as Phase 10.
+
+- Directly modify files.
+    Phase 11 is READ-ONLY. It produces a report, not changes.
+    If the developer wants to act on the findings, they do it themselves
+    or use Phase 10 for a new modification.
+
+
+WHY DETERMINISTIC FACTS SHOULD COME FROM REPOPILOT'S EXISTING TOOLING
+----------------------------------------------------------------------
+
+RepoPilot already has reliable, deterministic tools for gathering facts:
+
+- File paths and contents: RepoWalker + WorkspaceTools
+- Code symbols (functions, classes): ParsingService + parsers
+- Import relationships: import_extractor + DependencyGraphBuilder
+- Diff content: WorkspaceTools.diffs()
+- Test results: TestRunner.run()
+- Repository structure: RepositoryOverviewBuilder
+
+These tools produce VERIFIABLE output. If RepoPilot says a file exists,
+you can check. If it says a function starts at line 42, you can verify.
+If it says tests passed, you can look at the test output.
+
+The LLM, on the other hand, can say anything — and sometimes does.
+An LLM might confidently state that a file exists when it doesn't, or
+claim a function has a parameter that it doesn't have.
+
+The principle is:
+
+    FACTS from deterministic tools.
+    INTERPRETATION from the LLM.
+
+This is the same principle already used in Phase 8 (RepositoryOverview
+is deterministic; the LLM only interprets) and Phase 9 (sources come
+from retrieval metadata, never from LLM claims).
+
+
+==============================================================================
+DETERMINISTIC VS AI ANALYSIS
+==============================================================================
+
+Phase 11 uses a HYBRID ARCHITECTURE: some work is done by deterministic
+systems (plain code that always gives the same answer for the same input)
+and some work is done by AI (the LLM, which reasons about the code).
+
+DETERMINISTIC SYSTEM HANDLES:
+    - Files: which files exist, their paths, their sizes
+    - Paths: resolving relative paths, checking workspace boundaries
+    - Symbols: which functions/classes/methods exist and where
+    - Imports: which files import which other files
+    - Diff: exactly what changed, line by line
+    - Syntax: whether modified Python files parse correctly
+    - Test results: exit codes, stdout, stderr
+    - Repository structure: languages, technologies, dependency graph
+
+    These are FACTS. They don't change based on interpretation.
+    They come from RepoPilot's existing Phases 1-10.
+
+AI (LLM) HANDLES:
+    - Interpretation: what does this code mean? what is it trying to do?
+    - Reasoning: could this change cause a bug? why?
+    - Potential bug identification: this pattern looks like it could fail
+      when the input is empty
+    - Architectural recommendations: this new module should go through
+      the service layer instead of accessing the database directly
+    - Maintainability analysis: this function is doing too many things
+      and should be split
+    - Explanation: here's why this is a problem and here's how to fix it
+
+    These are INTERPRETATIONS. Different reviewers might disagree.
+    The LLM provides its best judgment, labeled appropriately.
+
+
+WHY COMBINING BOTH IS BETTER THAN RELYING ENTIRELY ON THE LLM
+---------------------------------------------------------------
+
+If you relied entirely on the LLM:
+    - It might invent files or functions that don't exist
+    - It might claim tests passed when they didn't
+    - It might miss that a file is imported by 15 other files
+    - It might not know the project's actual directory structure
+    - It might hallucinate that a security vulnerability exists
+      when the code it's worried about doesn't exist
+
+If you relied entirely on deterministic tools:
+    - You could only find problems that match pre-defined rules
+    - You couldn't understand the INTENT of the code
+    - You couldn't reason about subtle bugs
+    - You couldn't explain WHY something is a problem
+    - You couldn't suggest CREATIVE solutions
+
+The hybrid approach gets the best of both:
+    - Deterministic tools provide accurate, verifiable FACTS
+    - The LLM provides intelligent, context-aware INTERPRETATION
+    - Facts are never made up; interpretations are always labeled
+
+This is the same philosophy RepoPilot has used since Phase 8.
+
+
+==============================================================================
+SECURITY REVIEW
+==============================================================================
+
+HOW PHASE 11 CAN IDENTIFY POTENTIAL SECURITY PROBLEMS
+------------------------------------------------------
+
+Phase 11 can look for common security vulnerability patterns in code.
+The LLM examines the ACTUAL code content (from retrieved chunks or diffs)
+and identifies patterns it recognizes as potentially dangerous.
+
+EXAMPLES OF SECURITY PATTERNS:
+
+    Hardcoded secrets:
+        Finding: A string like "password = 'admin123'" or
+        "API_KEY = 'sk-abc123xyz'" appearing in source code.
+        Evidence: the actual line of code in the file.
+        Note: RepoPilot's own WorkspaceTools already blocks modification
+        of files with names containing "secret", "credential", "token",
+        "api_key" — Phase 11 can also FLAG these patterns in code content.
+
+    Unsafe input handling:
+        Finding: User input used directly without validation.
+        Evidence: a function parameter used in a database query or
+        file operation without sanitization.
+        Example: file_path = request.args['file']; open(file_path)
+
+    SQL injection patterns:
+        Finding: String formatting used to build SQL queries.
+        Evidence: f-string or .format() used with user input inside
+        a SQL string.
+        Example: f"SELECT * FROM users WHERE id = {user_id}"
+
+    Command injection patterns:
+        Finding: User input passed to os.system() or subprocess with
+        shell=True.
+        Evidence: the actual code showing shell=True with variable input.
+        Note: RepoPilot's own TestRunner uses shell=False explicitly.
+
+    Insecure authentication logic:
+        Finding: Plain-text password comparison, or missing password
+        hashing.
+        Evidence: code comparing passwords with == instead of using
+        a timing-safe comparison function.
+
+    Unsafe file operations:
+        Finding: File paths constructed from user input without
+        path traversal checks.
+        Evidence: code that joins user input with a base path without
+        calling .resolve() or checking .relative_to().
+        Note: RepoPilot's own WorkspaceTools._resolve() does this check
+        correctly — Phase 11 can compare against that pattern.
+
+    Missing authorization checks:
+        Finding: An endpoint that performs a sensitive operation without
+        checking if the user is authorized.
+        Evidence: a function that modifies data but has no
+        @requires_auth or similar decorator/check.
+
+
+IMPORTANT CAVEATS:
+
+    1. Findings must be EVIDENCE-BASED. The LLM must point to actual
+       code that it found in the context. It cannot claim "there might
+       be a vulnerability somewhere" without showing where.
+
+    2. Findings should include CONFIDENCE. The LLM should say whether
+       it's certain or uncertain. "This is definitely hardcoded" (fact)
+       vs. "This might be vulnerable depending on how the input arrives"
+       (inference).
+
+    3. An LLM CANNOT GUARANTEE security. Phase 11 is not a substitute
+       for professional security auditing, penetration testing, or
+       specialized security tools. It can find common patterns, but it
+       can miss subtle vulnerabilities, and it can occasionally flag
+       things that aren't actually problems (false positives).
+
+    4. LLM-based security review is a SUPPLEMENT to, not a replacement
+       for, deterministic security tools like bandit, semgrep, or
+       SonarQube.
+
+
+==============================================================================
+TESTING REVIEW
+==============================================================================
+
+HOW PHASE 11 CAN REVIEW TESTS
+------------------------------
+
+Phase 11 can analyze whether changes are adequately tested. It does this
+by combining Phase 10's test results with code retrieval.
+
+EXAMPLES OF TESTING FINDINGS:
+
+    Changed code without tests:
+        A new function was added but no corresponding test was found.
+        Evidence: the diff shows a new function in auth/register.py,
+        but Phase 6 retrieval finds no test file that imports or tests
+        this function.
+
+    Missing edge cases:
+        A function handles the "happy path" but not error cases.
+        Evidence: the new validation function checks for valid input
+        but has no test for what happens with None, empty string, or
+        extremely long input.
+
+    Weak assertions:
+        A test exists but its assertions don't actually verify behavior.
+        Evidence: a test that calls a function but only asserts that it
+        doesn't raise an exception, without checking the return value.
+
+    Important branches not covered:
+        A function has an if/else branch, but tests only cover one path.
+        Evidence: the diff shows an if/else block, and retrieved tests
+        only test the "if" case.
+
+    Regression risks:
+        A change modifies a function that has existing tests, but the
+        tests might not cover the new behavior.
+        Evidence: Phase 10's TestResult shows tests passed, but the
+        tests may have been written for the OLD behavior and still pass
+        by coincidence.
+
+HOW PHASE 10 TEST RESULTS ARE INCLUDED:
+
+    Phase 10's AgentResult contains a TestResult with:
+        - status: "passed" / "failed" / "timed_out" / "not_available"
+        - command: the exact command that was run (e.g., python -m pytest)
+        - exit_code: 0 for success, non-zero for failure
+        - stdout: test output (limited to 20,000 characters)
+        - stderr: error output
+
+    Phase 11 includes this as context for the LLM:
+
+        "Test execution results:
+         Command: python -m pytest
+         Status: passed
+         Exit code: 0
+         Output: (the actual pytest output)"
+
+    This lets the LLM reason about whether passing tests actually
+    validate the new code, or whether they passed because they don't
+    test the new code at all.
+
+    If status is "not_available" (no pytest.ini or tests/ directory was
+    found), Phase 11 can flag that as a testing gap.
+
+
+==============================================================================
+ARCHITECTURE REVIEW
+==============================================================================
+
+HOW PHASE 11 CAN REVIEW ARCHITECTURE
+-------------------------------------
+
+Phase 11 uses Phase 8's RepositoryOverview and DependencyGraph to
+understand and evaluate the project's architecture.
+
+EXAMPLES OF ARCHITECTURE FINDINGS:
+
+    Unnecessary coupling:
+        A new file imports from many different modules when it should
+        go through a single service layer.
+        Evidence: DependencyGraph shows the new file has edges to 8
+        different modules, while similar files have edges to only 2-3.
+
+    Duplicated logic:
+        A new function does the same thing as an existing function
+        in another file.
+        Evidence: Phase 6 retrieval finds similar code in another file
+        with a high similarity score.
+
+    Incorrect module responsibility:
+        A data validation function is placed in the database layer
+        instead of the service layer.
+        Evidence: the new function is in database/models.py but performs
+        business logic validation that should be in services/.
+
+    Circular dependencies:
+        A change creates a situation where file A imports file B and
+        file B imports file A.
+        Evidence: DependencyGraph shows edges in both directions between
+        two files.
+        Note: DependencyGraphBuilder already resolves Python imports to
+        file paths. Phase 11 can check for cycles in the resulting graph.
+
+    Poor separation of concerns:
+        A single function handles HTTP request parsing, business logic,
+        and database operations.
+        Evidence: the function's code (from the chunk) shows it does
+        request.form access, validation, and db.session operations all
+        in one place.
+
+    Inappropriate dependency direction:
+        A low-level utility module imports from a high-level service
+        module.
+        Evidence: DependencyGraph shows config.py importing from
+        modification_service.py, which reverses the expected direction.
+
+HOW PHASE 8 REPOSITORY INTELLIGENCE HELPS:
+
+    Phase 8's RepositoryOverview provides:
+
+    1. Technologies:
+       If the project uses Flask (detected via import hints), a new
+       endpoint that doesn't follow Flask patterns can be flagged.
+
+    2. Important files:
+       Changes to files identified as important (e.g., __init__.py,
+       config.py, models.py) should get extra scrutiny because they
+       affect many other parts of the project.
+
+    3. Entry points:
+       If a change modifies an entry point (e.g., main.py), Phase 11
+       can flag that this affects the application's startup.
+
+    4. Dependency graph:
+       The most powerful tool for architecture review. The graph shows:
+       - How many files import the changed file (impact radius)
+       - Whether the change creates new dependency edges
+       - Whether isolated files become connected
+       - Whether the dependency structure matches expected patterns
+
+
+==============================================================================
+PHASE 11 OUTPUT
+==============================================================================
+
+WHAT THE FINAL REVIEW REPORT SHOULD CONTAIN
+--------------------------------------------
+
+The review report is the primary output of Phase 11. A developer should
+be able to read it and immediately understand:
+
+1. What was reviewed
+2. What problems were found
+3. How serious each problem is
+4. Where each problem is located
+5. What evidence supports each finding
+6. What is recommended to fix each problem
+
+Specifically, the report should contain:
+
+    Overall summary:
+        A brief paragraph summarizing the review. Example:
+        "Reviewed 3 changed files with 45 lines added and 12 removed.
+         Found 7 findings: 0 critical, 1 high, 2 medium, 3 low, 1 info."
+
+    Number of findings:
+        Total count of findings discovered.
+
+    Severity breakdown:
+        How many findings at each severity level.
+        Example: CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, INFO: 1
+
+    Critical/high issues:
+        The most important findings, listed first.
+        These are the ones the developer should address before merging.
+
+    File locations:
+        For each finding, the exact file path and line number(s).
+
+    Explanations:
+        For each finding, a clear explanation of what the problem is
+        and why it matters.
+
+    Evidence:
+        For each finding, the actual code, diff, or facts that support
+        the finding.
+
+    Recommendations:
+        For each finding, a suggested fix or improvement.
+
+    Confidence:
+        For each finding, whether it is a fact, inference, or suggestion.
+
+    Test information:
+        Summary of Phase 10's test results, and whether the tests
+        adequately cover the changed code.
+
+    Warnings:
+        Any limitations of the review. Example:
+        "Only Python files were fully analyzed. JavaScript files in the
+         project were not reviewed."
+
+    Limitations:
+        Honest disclosure of what the review cannot guarantee. Example:
+        "This review is based on static analysis and LLM reasoning. It
+         cannot detect runtime-only bugs, race conditions, or issues
+         that require running the application."
+
+
+==============================================================================
+DATA FLOW
+==============================================================================
+
+THE COMPLETE DATA FLOW THROUGH THE EXISTING REPOPILOT ARCHITECTURE
+------------------------------------------------------------------
+
+Here is how data flows through all phases, from repository to review:
+
+    Repository (GitHub URL)
+        |
+        v
+    Ingestion (Phase 1/2) .................. IngestionService
+        |                                   GitCloner clones the repo.
+        |                                   RepoWalker walks the directory tree.
+        |                                   Produces RepositoryModel with
+        |                                   FileMetadata (path, language,
+        |                                   size, imports, line_count).
+        v
+    Parsing (Phase 3) ...................... ParsingService
+        |                                   ParserFactory selects the parser.
+        |                                   python_parser (ast) or
+        |                                   treesitter_parser extracts symbols.
+        |                                   Produces ParsedFile with
+        |                                   CodeSymbols (name, type,
+        |                                   start_line, end_line, parent).
+        v
+    Chunking (Phase 4) .................... ChunkingService
+        |                                   Chunker splits symbols into
+        |                                   CodeChunks with actual code text.
+        |                                   MAX_CHUNK_CHARS = 2000.
+        |                                   Overlap = 3 lines for large splits.
+        v
+    Embeddings (Phase 5) .................. EmbeddingService
+        |                                   SentenceTransformerProvider
+        |                                   uses all-MiniLM-L6-v2.
+        |                                   Each chunk -> 384-dim vector.
+        |                                   Batched (EMBEDDING_BATCH_SIZE=32).
+        |                                   Produces EmbeddedChunk.
+        v
+    FAISS (Phase 6) ....................... VectorStore
+        |                                   IndexFlatIP with IndexIDMap.
+        |                                   Normalized for cosine similarity.
+        |                                   Saved: index.faiss + metadata.json.
+        |                                   SearchService embeds queries and
+        |                                   searches for top_k matches.
+        v
+    Retrieval (Phase 6) ................... SearchService
+        |                                   Query -> embed -> FAISS search.
+        |                                   Returns SearchResult (chunk + score).
+        v
+    RAG (Phase 7) ......................... RAGService
+        |                                   ContextBuilder formats chunks.
+        |                                   PromptBuilder creates prompts.
+        |                                   GroqProvider calls LLM.
+        |                                   Produces RAGResponse with sources.
+        v
+    Repository Intelligence (Phase 8) ..... RepositoryIntelligenceService
+        |                                   RepositoryOverviewBuilder:
+        |                                     TechnologyDetector
+        |                                     ImportantFileDetector
+        |                                     DependencyGraphBuilder
+        |                                   ArchitectureContextBuilder formats.
+        |                                   LLM interprets deterministic facts.
+        |                                   Produces RepositoryAnalysis.
+        v
+    Developer Actions (Phase 9) ........... ActionService
+        |                                   ActionRouter routes by ActionType.
+        |                                   ActionContextBuilder gets context.
+        |                                   PromptBuilder builds action prompts.
+        |                                   LLM generates JSON response.
+        |                                   Findings: fact/inference/suggestion.
+        |                                   Sources from retrieval, not LLM.
+        |                                   READ-ONLY — no file modification.
+        v
+    Code Modification (Phase 10) .......... ModificationService
+        |                                   Reuses Phase 9 CHANGE_PLAN.
+        |                                   LLM generates ProposedChange JSON.
+        |                                   WorkspaceTools applies changes.
+        |                                   WorkspaceTools generates diffs.
+        |                                   ValidationService checks syntax.
+        |                                   TestRunner runs pytest.
+        |                                   Rollback on failure.
+        |                                   Produces AgentResult.
+        v
+    Diff / Validation / Tests ............. From Phase 10's AgentResult
+        |                                   FileDiff: unified diff text.
+        |                                   ValidationResult: syntax check.
+        |                                   TestResult: pytest results.
+        v
+    Phase 11 .............................. ReviewService (to be built)
+        |                                   Receives AgentResult or file list.
+        |                                   Gathers context from Phases 6/7/8.
+        |                                   LLM reviews with evidence.
+        |                                   Produces structured findings.
+        v
+    Code Review Findings .................. Structured review findings
+        |                                   Severity-ranked.
+        |                                   Evidence-based.
+        |                                   Labeled: fact/inference/suggestion.
+        v
+    Review Report ......................... Final output for the developer
+                                            Summary, findings, evidence,
+                                            recommendations, limitations.
+
+
+WHAT EACH PHASE CONTRIBUTES:
+
+    Phase 1/2: Provides the FILE INVENTORY — what files exist, their
+    languages, their imports. This is the foundation everything else
+    is built on.
+
+    Phase 3: Provides the CODE STRUCTURE — which functions, classes,
+    and methods exist in each file, and their exact locations.
+
+    Phase 4: Provides MEANINGFUL PIECES of code — sized right for an
+    embedding model to process and for the LLM to read.
+
+    Phase 5: Provides SEMANTIC VECTORS — numerical representations of
+    what each piece of code "means," enabling similarity search.
+
+    Phase 6: Provides RETRIEVAL — the ability to find related code
+    anywhere in the repository based on meaning, not just text matching.
+
+    Phase 7: Provides GROUNDED ANSWERS — the ability to answer questions
+    using real, retrieved code as evidence.
+
+    Phase 8: Provides ARCHITECTURAL UNDERSTANDING — languages, technologies,
+    dependencies, important files, all computed deterministically.
+
+    Phase 9: Provides ACTION PATTERNS — how to route requests, build
+    context, prompt the LLM, parse JSON responses, and build findings
+    with explicit fact/inference/suggestion labels.
+
+    Phase 10: Provides MODIFICATION RESULTS — diffs, validation results,
+    test results, and the complete state of what was changed and how.
+
+    Phase 11: Provides REVIEW — intelligent analysis of all of the above,
+    producing a structured report with evidence-based findings.
+
+
+==============================================================================
+WHY THIS IS AGENTIC
+==============================================================================
+
+"Agentic" means a system that can take actions, make decisions, and
+work toward a goal with some degree of autonomy — rather than just
+responding to a single prompt.
+
+IS PHASE 11 AGENTIC?
+---------------------
+
+Phase 11 is AI-POWERED but not fully agentic in the way Phase 10 is.
+
+Here's the distinction:
+
+    AI-powered analysis (Phase 11):
+        The system uses an LLM to analyze code and produce findings.
+        But it does not take actions on its own. It reads code, reasons
+        about it, and produces a report. The developer decides what to
+        do with the findings.
+
+    Tool-using agent (Phase 10):
+        The system uses tools (WorkspaceTools) to modify files, run
+        tests, and generate diffs. It makes decisions during the workflow
+        (e.g., rolling back if tests fail).
+
+    Autonomous modification (Phase 10):
+        The system independently creates, replaces, and deletes files
+        based on the plan, without asking the developer at each step.
+
+    Controlled agent workflow (Phase 10):
+        Phase 10 follows a structured workflow:
+        plan -> generate -> apply -> validate -> test -> result.
+        It makes decisions at each step (e.g., what to roll back).
+
+Phase 11 fits into the OVERALL RepoPilot agent as a POST-MODIFICATION
+ANALYSIS step. In a complete agent workflow, the sequence would be:
+
+    1. User makes a request
+    2. Phase 9 creates a plan (agentic: routing, context selection)
+    3. Phase 10 modifies code (agentic: apply, validate, test, rollback)
+    4. Phase 11 reviews the result (AI-powered: analysis, findings)
+    5. Developer reviews the report (human in the loop)
+
+Phase 11 is the "quality gate" — it provides intelligent analysis before
+the developer makes their final decision. It is not autonomous (it
+doesn't modify anything) but it is intelligent (it reasons about code
+using an LLM).
+
+Could Phase 11 be made more agentic in the future? Yes — for example,
+it could automatically trigger a Phase 10 fix for critical findings.
+But that would be a Phase 12+ decision. Phase 11 should stay focused
+on REVIEW and REPORTING.
+
+
+==============================================================================
+WHAT WE SHOULD NOT BUILD
+==============================================================================
+
+Phase 11 should NOT introduce any of the following:
+
+DO NOT introduce LangGraph or any new agent framework.
+    RepoPilot's Phase 10 already has a working agent workflow using
+    plain Python (ModificationService.execute). Phase 11 is simpler
+    than Phase 10 — it doesn't need a framework.
+
+DO NOT introduce multi-agent architecture.
+    Phase 11 is a single review step, not a team of agents debating.
+    One service, one LLM call per review area, structured output.
+
+DO NOT introduce a duplicate RAG system.
+    Phase 7's RAGService, ContextBuilder, and PromptBuilder already
+    exist. Phase 11 should reuse them, not rebuild them.
+
+DO NOT introduce a duplicate embedding system.
+    Phase 5's EmbeddingService and SentenceTransformerProvider already
+    exist. Phase 11 retrieves using Phase 6's SearchService, which
+    already embeds queries using the same provider.
+
+DO NOT introduce duplicate repository parsing.
+    Phase 3's ParsingService already parses files into CodeSymbols.
+    Phase 11 should read the existing ParsedFile results, not re-parse.
+
+DO NOT introduce a duplicate diff system.
+    Phase 10's WorkspaceTools.diffs() already generates unified diffs.
+    Phase 11 reads those diffs from AgentResult.
+
+DO NOT introduce unrestricted shell execution.
+    Phase 11 is READ-ONLY. It has no reason to run shell commands.
+    Phase 10's TestRunner is the only component that runs commands,
+    and it uses a deterministic, allowlisted command only.
+
+DO NOT introduce automatic GitHub commits, pushes, or pull requests.
+    Phase 11 produces a REPORT. It does not interact with GitHub.
+    The developer decides what to do with the findings.
+
+DO NOT introduce deployment or CI/CD.
+    Phase 11 is a code review tool, not a deployment pipeline.
+
+DO NOT introduce Phase 12 functionality.
+    Each phase is deliberately scoped. Phase 11 does code review.
+    Whatever comes after Phase 11 is a separate discussion.
+
+THE PRINCIPLE:
+    Reuse Phases 1-10. Add ONLY what is needed for code review.
+    Every existing service, model, builder, and provider should be
+    treated as a stable foundation to build on, not something to
+    replace or duplicate.
+
+
+==============================================================================
+POTENTIAL ARCHITECTURE
+==============================================================================
+
+These are CONCEPTUAL POSSIBILITIES for how Phase 11's code might be
+organized. The actual implementation must be decided only after careful
+inspection of the existing codebase and its patterns.
+
+POSSIBLE COMPONENTS:
+
+    ReviewService:
+        The main orchestrator for Phase 11, similar to how
+        ModificationService orchestrates Phase 10 or ActionService
+        orchestrates Phase 9.
+
+        Possible responsibilities:
+            - Accept a review request (AgentResult for diff review,
+              or RepositoryModel for full review)
+            - Gather context from existing phases
+            - Build review-specific prompts
+            - Call the LLM
+            - Parse findings from the LLM response
+            - Rank findings by severity
+            - Produce a ReviewResult
+
+    ReviewFinding:
+        A dataclass representing one review finding.
+        Similar to Phase 9's Finding, but potentially with additional
+        fields like severity, category, evidence, and line_range.
+
+        Possible structure:
+            - severity: "critical" / "high" / "medium" / "low" / "info"
+            - category: "bug" / "security" / "architecture" / etc.
+            - description: what was found
+            - file_path: where it was found
+            - line_range: start_line to end_line
+            - evidence: the actual code supporting this finding
+            - finding_type: "fact" / "inference" / "suggestion"
+            - recommendation: suggested fix
+
+    ReviewResult:
+        A dataclass representing the complete review report.
+        Similar to AgentResult but focused on review output.
+
+        Possible structure:
+            - summary: overall review summary
+            - findings: list of ReviewFinding
+            - severity_counts: dict of severity -> count
+            - sources: list of Source (from retrieval)
+            - test_context: summary of test results if available
+            - warnings: review limitations
+            - review_mode: "full" or "diff"
+
+    ReviewAnalyzer:
+        A helper that prepares the review context by combining outputs
+        from multiple existing phases.
+
+        Possible responsibilities:
+            - Collect changed files and diffs (from Phase 10)
+            - Retrieve related code (from Phase 6)
+            - Get architecture context (from Phase 8)
+            - Format everything for the LLM
+
+    SeverityRanker:
+        A simple deterministic component that sorts findings by severity.
+        Could be as simple as a dictionary mapping severity strings to
+        numeric values for sorting.
+
+    ReviewPromptBuilder:
+        Review-specific prompt methods, following the same pattern as
+        PromptBuilder's existing build_test_generation(),
+        build_documentation(), etc.
+
+        Possible prompts:
+            - build_security_review()
+            - build_architecture_review()
+            - build_general_review()
+
+IMPORTANT NOTES:
+
+    1. These are POSSIBILITIES. The actual implementation should match
+       the patterns already established in the codebase.
+
+    2. Not all of these need to be separate classes. If a component
+       would only have one method and no state, it could be a simple
+       function or a static method on an existing class.
+
+    3. The existing codebase uses a consistent pattern:
+       - Service classes for orchestration
+       - Dataclasses for data models
+       - Builder classes for formatting
+       - Constructor injection for testability
+
+       Phase 11 should follow these same patterns.
+
+    4. Do NOT prescribe unnecessary classes. The right number of
+       components will become clear during implementation. Start
+       simple and refactor if needed.
+
+
+==============================================================================
+UNDERSTANDING CHECK
+==============================================================================
+
+After reading this document, you should be able to answer:
+
+1. What problem does Phase 11 solve?
+   → RepoPilot can modify code (Phase 10) but cannot review it for
+     bugs, security issues, or architecture violations.
+
+2. How is Phase 11 different from Phase 10?
+   → Phase 10 WRITES code. Phase 11 READS and REVIEWS code. Phase 11
+     never modifies files.
+
+3. What existing RepoPilot components does Phase 11 reuse?
+   → Phase 6 retrieval (SearchService, VectorStore), Phase 7 context
+     formatting (ContextBuilder) and LLM access (GroqProvider),
+     Phase 8 architecture facts (RepositoryOverview, DependencyGraph),
+     Phase 9 finding structure (Finding, fact/inference/suggestion),
+     Phase 10 output (AgentResult, diffs, test results).
+
+4. What is evidence-based review?
+   → Every finding must be supported by real code, diffs, or facts
+     from the repository. The LLM cannot invent problems.
+
+5. What are the severity levels?
+   → CRITICAL (fix immediately), HIGH (fix soon), MEDIUM (real problem,
+     not urgent), LOW (minor quality issue), INFO (observation).
+
+6. What is the difference between a fact, inference, and suggestion?
+   → Fact: directly observable in code. Inference: reasonable conclusion.
+     Suggestion: proposed action.
+
+7. Why use a hybrid (deterministic + AI) approach?
+   → Deterministic tools provide accurate facts. The LLM provides
+     intelligent interpretation. Neither alone is sufficient.
+
+8. What should Phase 11 NOT introduce?
+   → No new agent frameworks, no duplicate systems, no automatic
+     GitHub operations, no deployment, no file modification.
+
+
+==============================================================================
+END OF PHASE 11 EXPLANATION
+==============================================================================
+
+This document describes Phase 11 conceptually. No implementation has
+been created. The next step is to review this document and decide on
+the implementation approach based on the actual codebase.
+
+Do not implement Phase 11 until this document has been reviewed.
+Do not proceed to Phase 12.

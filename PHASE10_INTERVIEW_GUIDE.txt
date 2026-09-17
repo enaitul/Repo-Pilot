@@ -1,0 +1,159 @@
+RepoPilot Phase 10 - Interview Explanation
+
+What is Phase 10?
+-----------------
+Before Phase 10, RepoPilot could read a repository, understand code, answer
+questions, and suggest a change plan. But it could not safely modify code.
+
+Phase 10 adds controlled code modification. It can prepare a code change in a
+temporary copy of a repository, show the developer the real diff, validate the
+change, run approved tests, and report the result.
+
+The important point is: it does not change the developer's original repository.
+
+
+Simple workflow
+---------------
+1. The developer asks for a change.
+   Example: "Change the login validation message."
+
+2. RepoPilot reuses the Phase 9 CHANGE_PLAN action.
+   This creates a high-level plan using repository information already built by
+   earlier phases.
+
+3. The LLM proposes structured changes, not shell commands.
+   A proposed change looks like this:
+
+   {
+     "file_path": "src/login.py",
+     "operation": "replace",
+     "start_line": 10,
+     "end_line": 12,
+     "new_content": "new code here"
+   }
+
+4. RepoPilot checks every proposed change before writing anything.
+
+5. It applies valid changes only inside RepoPilot's temporary cloned workspace.
+
+6. It creates a real before-and-after diff from the files on disk.
+
+7. It validates the modified code. Python files receive syntax validation.
+
+8. It selects a known test command from repository configuration. For supported
+   Python repositories, this is the fixed command: Python -m pytest.
+
+9. It returns a human-reviewable result containing the plan, proposed changes,
+   applied changes, diff, validation result, test result, warnings, and errors.
+
+
+Why structured changes instead of shell commands?
+-------------------------------------------------
+An LLM must never be allowed to generate a command such as deleting files,
+installing packages, or running arbitrary scripts.
+
+Instead, RepoPilot accepts only three controlled operations:
+- create a new allowed text file
+- replace a known line range in an existing file
+- delete an allowed file
+
+Every operation has a file path and is validated by normal Python code before
+it is applied. This makes the behavior predictable and auditable.
+
+
+How is the original repository protected?
+-----------------------------------------
+RepoPilot already clones repositories into a temporary directory. Phase 10
+reuses that clone as its only workspace.
+
+All file paths must stay inside that workspace. RepoPilot rejects:
+- absolute paths
+- path traversal such as ../../etc/passwd
+- symlinks that point outside the workspace
+- unsupported file types
+- files that look sensitive, such as secret, token, credential, or api_key files
+- files that are too large
+
+So the original local repository is not edited. Phase 10 also does not commit,
+push, create pull requests, deploy, or install dependencies.
+
+
+How are changes validated?
+--------------------------
+After changes are applied to the temporary workspace, RepoPilot:
+- checks that modified paths are still safe
+- checks that resulting content is valid UTF-8 text
+- checks Python syntax with Python's built-in compiler
+- creates a real unified diff from the file contents
+
+If validation fails, RepoPilot restores the temporary workspace to its state
+before the change. The result still retains the diff and failure information so
+the developer can understand what happened.
+
+
+How are tests kept safe?
+------------------------
+The LLM cannot choose or generate a test command.
+
+RepoPilot uses a fixed policy. If it recognizes a Python test layout, it runs:
+
+Python -m pytest
+
+The test process uses shell=False, has a timeout, captures standard output and
+error output, limits how much output is kept, and receives a scrubbed
+environment so unrelated environment secrets are not passed to it.
+
+If tests fail or time out, RepoPilot rolls back the temporary workspace changes
+and reports the failure. If no supported test setup is found, it reports that
+tests are not available instead of guessing a command.
+
+
+Key classes and responsibilities
+--------------------------------
+ModificationService
+  Runs the complete Phase 10 workflow: plan, generate, apply, diff, validate,
+  test, and report.
+
+WorkspaceTools
+  Provides safe and limited file operations inside the temporary workspace.
+
+ValidationService
+  Runs deterministic post-change checks, including Python syntax validation.
+
+TestRunner
+  Selects and runs only allowed test commands with timeout and output limits.
+
+AgentState and AgentResult
+  Store workflow progress and provide a clear result for developer review.
+
+
+How Phase 10 reuses earlier phases
+----------------------------------
+Phase 1/2: temporary repository clone and repository file model
+Phase 6/7: retrieval and grounded reasoning infrastructure
+Phase 8: repository architecture context
+Phase 9: CHANGE_PLAN action and existing LLMProvider abstraction
+Phase 10: controlled modification, validation, testing, and reporting
+
+The project continues using the existing GroqProvider and GROQ_API_KEY setup.
+It does not add a second LLM provider or add LangGraph.
+
+
+Short interview answer
+----------------------
+"Phase 10 turns RepoPilot from a read-only code assistant into a controlled
+code modification assistant. It first reuses the existing Phase 9 planning
+system, then asks the LLM for structured edit records instead of shell commands.
+Those records are validated and applied only in a temporary cloned workspace,
+never in the original repository. RepoPilot generates a real diff, validates
+the edited files, runs only a fixed approved test command with a timeout, and
+returns the result for human review. Unsafe paths, arbitrary commands, secrets,
+commits, pushes, deployments, and automatic dependency installation are all
+blocked. If validation or tests fail, the temporary changes are rolled back."
+
+
+Testing
+-------
+Phase 10 has offline tests for file creation, replacement, deletion, diffs,
+path traversal rejection, symlink escape rejection, malformed LLM output,
+syntax-validation rollback, failed-test rollback, and test timeout handling.

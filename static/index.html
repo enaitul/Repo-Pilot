@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RepoPilot — AI Developer Productivity Agent</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header><div><p class="eyebrow">REPOSITORY INTELLIGENCE</p><h1>RepoPilot</h1><p class="subtitle">AI Developer Productivity Agent</p></div><span id="health" class="pill">Checking service…</span></header>
+    <section class="card hero"><h2>Analyze a GitHub repository</h2><p>RepoPilot creates a controlled, temporary workspace and never changes the original repository.</p><form id="analyze-form"><input id="repo-url" type="url" required placeholder="https://github.com/owner/repository"><button>Analyze repository</button></form><p class="hint">Public GitHub HTTPS repositories only. Analysis can take a moment while embeddings load.</p></section>
+    <section class="card key-card">
+      <h2>Connect your AI provider</h2>
+      <div class="key-grid">
+        <label>LLM Provider<select id="llm-provider"><option value="groq">Groq</option></select></label>
+        <label>API Key<input id="groq-key" type="password" autocomplete="off" spellcheck="false" placeholder="gsk_…"></label>
+      </div>
+      <p class="hint">Your API key is used only to make AI requests. RepoPilot does not store it, log it, or save it in your browser.</p>
+    </section>
+    <p id="notice" role="status" class="notice hidden"></p>
+    <section id="results" class="hidden">
+      <div class="grid">
+        <article class="card"><h2>Repository overview</h2><div id="overview"></div></article>
+        <article class="card"><h2>Architecture</h2><p>Architecture facts are computed from the cloned repository. Ask for an interpreted explanation below.</p><div id="architecture"></div></article>
+      </div>
+      <section class="card"><h2>AI Repository Assistant</h2><form id="question-form"><textarea id="question" required placeholder="Ask RepoPilot anything about this repository"></textarea><button>Ask</button></form><div id="answer" class="output"></div></section>
+      <section class="card"><h2>Developer actions</h2><p>Actions are grounded in repository context. They propose work; they do not write files.</p><form id="action-form"><select id="action-type"><option value="change_plan">Change Plan</option><option value="test_generation">Generate Tests</option><option value="documentation">Documentation</option><option value="refactoring">Refactor</option><option value="bug_analysis">Bug Analysis</option></select><input id="target-file" placeholder="Optional target file, e.g. src/app.py"><textarea id="action-request" required placeholder="Describe the developer task"></textarea><button>Run action</button></form><div id="action-output" class="output"></div></section>
+      <section class="card"><h2>Controlled code modification</h2><p>Generates structured edits, applies them only inside the disposable clone, validates them, then runs an allowlisted test command where available.</p><form id="modify-form"><textarea id="modify-request" required placeholder="Describe the change you want RepoPilot to make"></textarea><button>Generate and validate modification</button></form><div id="changes" class="output"></div></section>
+      <section class="grid"><article class="card"><h2>Code review</h2><p>Reviews the full repository, or the most recent controlled diff when available.</p><form id="review-form"><select id="review-mode"><option value="full_repo">Full repository</option><option value="diff">Latest change diff</option></select><button>Run review</button></form><div id="review" class="output"></div></article><article class="card"><h2>GitHub workflow</h2><p>Requires an applied controlled modification. Approval is explicit; a server-side <code>GITHUB_TOKEN</code> is optional for push/PR creation.</p><form id="github-form"><input id="repo-owner" placeholder="Repository owner" required><input id="repo-name" placeholder="Repository name" required><label class="check"><input id="approved" type="checkbox"> I approve the reviewed changes</label><button>Start GitHub workflow</button></form><div id="github" class="output"></div></article></section>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

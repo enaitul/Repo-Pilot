@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: repopilot
+    env: docker
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: REPOPILOT_SESSION_TTL_SECONDS
+        value: "3600"

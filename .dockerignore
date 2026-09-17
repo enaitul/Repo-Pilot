@@ -1,0 +1,6 @@
+__pycache__/
+.pytest_cache/
+.git/
+.env
+repopilot_vector_store/
+*.pyc
