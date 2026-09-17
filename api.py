@@ -107,6 +107,16 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+@app.on_event("startup")
+def prewarm_embedding_model() -> None:
+    try:
+        from repopilot.sentence_transformer_provider import SentenceTransformerProvider
+        SentenceTransformerProvider()._get_model()
+    except Exception as exc:
+        print(f"Startup model pre-warm warning: {exc}")
+
+
+
 def _cleanup_expired_sessions() -> None:
     cutoff = time.time() - SESSION_TTL_SECONDS
     for session_id, session in list(sessions.items()):
