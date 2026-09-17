@@ -3,10 +3,12 @@ services:
     name: repopilot
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
     startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
       - key: GROQ_API_KEY
         sync: false
       - key: REPOPILOT_SESSION_TTL_SECONDS
